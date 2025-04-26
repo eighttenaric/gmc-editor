@@ -1,4 +1,3 @@
-# streamlit_app.py
 import streamlit as st
 import os
 import json
@@ -27,18 +26,22 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logger.debug("App starting...")
 
-# OAuth Configuration
+# ----------------------
+# Configuration
+# ----------------------
+# OAuth scopes
 SCOPES = [
     'https://www.googleapis.com/auth/content',
     'https://www.googleapis.com/auth/gmail.send'
 ]
-REDIRECT_URI = os.getenv('REDIRECT_URI')
+
+# REDIRECT_URI: first from Streamlit secrets, then from env var
+REDIRECT_URI = st.secrets.get('REDIRECT_URI', os.getenv('REDIRECT_URI'))
 if not REDIRECT_URI:
     st.error("Environment variable REDIRECT_URI is required.")
     st.stop()
 
-# Load OAuth client secrets
-# In Streamlit Cloud, place the JSON under "client_secrets" in Secrets; locally, use CLIENT_SECRETS_FILE env var
+# Client secrets: from Streamlit secrets or CLIENT_SECRETS_FILE
 if 'client_secrets' in st.secrets:
     CLIENT_SECRETS_FILE = 'client_secrets_temp.json'
     with open(CLIENT_SECRETS_FILE, 'w') as f:
@@ -51,17 +54,18 @@ else:
         st.stop()
     logger.debug(f"Using client_secrets file: {CLIENT_SECRETS_FILE}")
 
-# Rate limit delay\RATE_LIMIT_DELAY = float(os.getenv('RATE_LIMIT_DELAY', '0.2'))
+# Rate limit delay between OpenAI calls (seconds)
+RATE_LIMIT_DELAY = float(os.getenv('RATE_LIMIT_DELAY', '0.2'))
 
-# OpenAI key
+# OpenAI API key
 openai.api_key = os.getenv('OPENAI_API_KEY')
 if not openai.api_key:
     st.warning("OpenAI API key not set; skipping AI optimization.")
 
-# Email recipients
+# Email recipients for QA reports
 EMAIL_TO = os.getenv('EMAIL_TO')
 
-# Backup directory
+# Directory for backups
 BACKUP_DIR = 'backups'
 os.makedirs(BACKUP_DIR, exist_ok=True)
 
@@ -75,15 +79,18 @@ def get_flow():
         redirect_uri=REDIRECT_URI
     )
 
+
 def authorize():
     flow = get_flow()
     auth_url, state = flow.authorization_url(
-        access_type='offline', include_granted_scopes='true'
+        access_type='offline',
+        include_granted_scopes='true'
     )
     st.session_state['flow'] = flow
     st.session_state['state'] = state
     st.markdown(f"[Authorize with Google]({auth_url})")
     st.stop()
+
 
 def fetch_credentials():
     params = st.query_params
@@ -121,13 +128,13 @@ def ai_optimize(field, original, url):
     except Exception:
         snippet = ''
     prompt = (
-        f"Optimize the {field} for GMC. Original: '{original}'. Page snippet: '{snippet}'. "
-        f"Return only the optimized {field}."
+        f"Optimize the {field} for GMC. Original: '{original}'. "
+        f"Page snippet: '{snippet}'. Return only the optimized {field}."
     )
     try:
         res = openai.ChatCompletion.create(
             model='gpt-4',
-            messages=[{'role':'user','content':prompt}],
+            messages=[{'role':'user', 'content': prompt}],
             max_tokens=150
         )
         result = res.choices[0].message.content.strip()
@@ -147,6 +154,7 @@ def diff_feed(df_old, df_new):
                  (df['googleProductCategory_old'] != df['googleProductCategory_new'])]
     return changed
 
+
 def send_email(html, creds):
     if not EMAIL_TO:
         st.error("EMAIL_TO not set")
@@ -160,39 +168,44 @@ def send_email(html, creds):
     st.success("QA report sent.")
 
 # ----------------------
-# Main App
+# Main Application
 # ----------------------
 def main():
     st.title("GMC Feed Editor & AI Optimizer")
     creds = fetch_credentials()
     content = build('content', 'v2.1', credentials=creds)
 
+    # List accessible Merchant Center accounts
     info = content.accounts().authinfo().execute()
     accounts = info.get('accountIdentifiers', [])
     selected = st.sidebar.selectbox("Select GMC Account", accounts)
 
+    # Fetch & backup feed
     if st.button("Fetch & Backup Feed"):
         products = content.products().list(merchantId=selected).execute().get('resources', [])
         df = pd.json_normalize(products)
-        for col in ['id','link','title','description','productType','googleProductCategory']:
+        for col in ['id', 'link', 'title', 'description', 'productType', 'googleProductCategory']:
             df[col] = df.get(col, '')
-        df.rename(columns={'id':'product_id'}, inplace=True)
+        df.rename(columns={'id': 'product_id'}, inplace=True)
         st.session_state['df_old'] = df.copy()
         st.session_state['df'] = df.copy()
         st.success(f"Fetched {len(df)} items.")
 
+    # Review, optimize, QA, and sync
     if 'df' in st.session_state:
         st.dataframe(st.session_state['df'])
+
         if st.button("AI Optimize Attributes"):
             df = st.session_state['df']
             total = len(df)
             progress = st.progress(0)
             for i, row in df.iterrows():
-                for f in ['title','description','productType','googleProductCategory']:
-                    df.at[i,f] = ai_optimize(f, row[f], row.get('link',''))
-                progress.progress((i+1)/total)
+                for f in ['title', 'description', 'productType', 'googleProductCategory']:
+                    df.at[i, f] = ai_optimize(f, row[f], row.get('link', ''))
+                progress.progress((i + 1) / total)
             st.session_state['df'] = df
             st.success("Optimization done.")
+
         if st.button("Show QA Report"):
             diff = diff_feed(st.session_state['df_old'], st.session_state['df'])
             if diff.empty:
@@ -201,22 +214,22 @@ def main():
                 st.dataframe(diff)
                 if st.button("Email QA Report"):
                     send_email(diff.to_html(index=False), creds)
+
         if st.button("Sync to GMC"):
             df = st.session_state['df']
             total = len(df)
             progress2 = st.progress(0)
-            count=0
+            count = 0
             for i, row in df.iterrows():
                 content.products().patch(
                     merchantId=selected,
                     productId=row['product_id'],
-                    body={f:row[f] for f in ['title','description','productType','googleProductCategory']}
+                    body={f: row[f] for f in ['title', 'description', 'productType', 'googleProductCategory']}
                 ).execute()
-                count+=1
-                progress2.progress(count/total)
+                count += 1
+                progress2.progress(count / total)
             st.success(f"Synced {count} items.")
 
 if __name__ == '__main__':
     os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
     main()
-
