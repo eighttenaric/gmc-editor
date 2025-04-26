@@ -43,21 +43,40 @@ if not REDIRECT_URI:
 
 # Load OAuth client secrets from Streamlit secrets or local file
 if 'client_secrets' in st.secrets:
+    secrets_dict = dict(st.secrets['client_secrets'])
+    # Ensure it's a web/installed OAuth client JSON
+    if secrets_dict.get('type') == 'service_account' or ('installed' not in secrets_dict and 'web' not in secrets_dict):
+        st.error(
+            "It looks like you've supplied service account credentials. "
+            "This app requires OAuth client credentials (Web or Installed). "
+            "Please create a new OAuth 2.0 Client ID in Google Cloud Console (type: Web application), download its JSON, and paste it as 'client_secrets' in your Streamlit secrets."
+        )
+        st.stop()
     CLIENT_SECRETS_FILE = 'client_secrets_temp.json'
-    # Write the raw JSON secret to a temp file
+    # Write the OAuth client JSON to a temp file
     with open(CLIENT_SECRETS_FILE, 'w') as f:
-        # Convert AttrDict to regular dict for JSON
-        secrets_dict = dict(st.secrets['client_secrets'])
-        f.write(json.dumps(secrets_dict))
-    logger.debug("Loaded client_secrets from st.secrets into %s", CLIENT_SECRETS_FILE)
+        json.dump(secrets_dict, f)
+    logger.debug("Loaded OAuth client_secrets from st.secrets into %s", CLIENT_SECRETS_FILE)
 else:
     CLIENT_SECRETS_FILE = os.getenv('CLIENT_SECRETS_FILE', 'client_secrets.json')
     if not os.path.exists(CLIENT_SECRETS_FILE):
         st.error(f"Client secrets file not found: {CLIENT_SECRETS_FILE}")
         st.stop()
+    # Validate local JSON
+    try:
+        local_cfg = json.load(open(CLIENT_SECRETS_FILE))
+        if local_cfg.get('type') == 'service_account' or ('installed' not in local_cfg and 'web' not in local_cfg):
+            st.error(
+                "Local client_secrets.json is not a Web/Installed OAuth client file. "
+                "Please supply OAuth client credentials JSON from Google Cloud Console."
+            )
+            st.stop()
+    except Exception:
+        st.error("Failed to parse client_secrets.json. Ensure it is valid JSON.")
+        st.stop()
     logger.debug(f"Using client_secrets file: {CLIENT_SECRETS_FILE}")
 
-# Rate limit delay between OpenAI calls
+# Rate limit delay between OpenAI calls between OpenAI calls
 RATE_LIMIT_DELAY = float(os.getenv('RATE_LIMIT_DELAY', '0.2'))
 # OpenAI API key
 openai.api_key = os.getenv('OPENAI_API_KEY')
