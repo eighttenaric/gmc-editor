@@ -33,8 +33,10 @@ SCOPES = [
     'https://www.googleapis.com/auth/content',
     'https://www.googleapis.com/auth/gmail.send'
 ]
-# REDIRECT_URI from secrets or env
-REDIRECT_URI = st.secrets.get('REDIRECT_URI', os.getenv('REDIRECT_URI'))
+# REDIRECT_URI: try top-level secret, then service-account table, then env var
+REDIRECT_URI = st.secrets.get('REDIRECT_URI') or \
+               (st.secrets.get('client_secrets', {}).get('REDIRECT_URI') if 'client_secrets' in st.secrets else None) or \
+               os.getenv('REDIRECT_URI')
 if not REDIRECT_URI:
     st.error("Environment variable REDIRECT_URI is required.")
     st.stop()
