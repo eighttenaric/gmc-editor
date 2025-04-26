@@ -46,8 +46,10 @@ if 'client_secrets' in st.secrets:
     CLIENT_SECRETS_FILE = 'client_secrets_temp.json'
     # Write the raw JSON secret to a temp file
     with open(CLIENT_SECRETS_FILE, 'w') as f:
-        f.write(json.dumps(st.secrets['client_secrets']))
-    logger.debug("Loaded client_secrets from st.secrets into %s", CLIENT_SECRETS_FILE)
+        # Convert AttrDict to regular dict for JSON
+        secrets_dict = dict(st.secrets['client_secrets'])
+        f.write(json.dumps(secrets_dict))
+    logger.debug("Loaded client_secrets from st.secrets into %s", CLIENT_SECRETS_FILE)("Loaded client_secrets from st.secrets into %s", CLIENT_SECRETS_FILE)
 else:
     CLIENT_SECRETS_FILE = os.getenv('CLIENT_SECRETS_FILE', 'client_secrets.json')
     if not os.path.exists(CLIENT_SECRETS_FILE):
